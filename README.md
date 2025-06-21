@@ -1,4 +1,4 @@
-
+# Assignment Submission Portal
 A web-based portal system for managing assignment submissions between students and staff members
 
 ## Project Overview
