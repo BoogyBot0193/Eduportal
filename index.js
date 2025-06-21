@@ -6,79 +6,64 @@ const path = require('path');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
+// Load environment variables
+require('dotenv').config();
+
 // Initialize Express app
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static('uploads')); // To serve uploaded files
+app.use('/uploads', express.static('uploads'));
 
-// MongoDB connection
-mongoose.connect('mongodb://localhost:27017/', {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-});
+// MongoDB connection with proper error handling
+const connectDB = async () => {
+    try {
+        await mongoose.connect(process.env.MONGODB_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+        });
+        console.log('MongoDB connected successfully');
+    } catch (error) {
+        console.error('MongoDB connection error:', error);
+        process.exit(1);
+    }
+};
 
-// Schema for Assignments
+// Connect to database
+connectDB();
+
+// Schema definitions
 const assignmentSchema = new mongoose.Schema({
     studentName: String,
     filePath: String,
     submissionDate: { type: Date, default: Date.now },
 });
+
 const userSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     role: { type: String, enum: ['student', 'staff'], required: true },
     createdAt: { type: Date, default: Date.now }
 });
+
 const User = mongoose.model('User', userSchema);
 const Assignment = mongoose.model('Assignment', assignmentSchema);
-const JWT_SECRET = 'secret';
-// Multer setup for file uploads
+
+// Use environment variable for JWT secret
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// Multer setup
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, 'uploads/');
     },
     filename: (req, file, cb) => {
-        cb(null, Date.now() + path.extname(file.originalname)); // Save file with timestamp
+        cb(null, Date.now() + path.extname(file.originalname));
     },
 });
 const upload = multer({ storage: storage });
 
-// Route to handle assignment upload
-app.post('/upload', upload.single('assignmentFile'), async (req, res) => {
-    try {
-        const { studentName } = req.body;
-        const assignment = new Assignment({
-            studentName,
-            filePath: req.file.path,
-        });
-        await assignment.save();
-        res.status(201).json(assignment);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to upload assignment' });
-    }
-});
-
-// Route to fetch all assignments
-app.get('/assignments', async (req, res) => {
-    try {
-        const assignments = await Assignment.find();
-        res.json(assignments);
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch assignments' });
-    }
-});
-
-// Route to delete an assignment by ID
-app.delete('/assignments/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        await Assignment.findByIdAndDelete(id);
-        res.json({ message: 'Assignment deleted successfully' });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to delete assignment' });
-    }
-});
+// Authentication middleware
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -95,10 +80,19 @@ const authenticateToken = (req, res, next) => {
         next();
     });
 };
-// Route to create default users (run once to setup)
+
+// HARDCODED setup-users route
 app.post('/setup-users', async (req, res) => {
     try {
-        // Create default staff user
+        // Check if users already exist
+        const existingStaff = await User.findOne({ username: 'staff' });
+        const existingStudent = await User.findOne({ username: 'student' });
+
+        if (existingStaff || existingStudent) {
+            return res.status(400).json({ error: 'Default users already exist' });
+        }
+
+        // Create default staff user with hardcoded password
         const staffPassword = await bcrypt.hash('staff123', 10);
         const staff = new User({
             username: 'staff',
@@ -106,7 +100,7 @@ app.post('/setup-users', async (req, res) => {
             role: 'staff'
         });
 
-        // Create default student user
+        // Create default student user with hardcoded password
         const studentPassword = await bcrypt.hash('student123', 10);
         const student = new User({
             username: 'student',
@@ -119,9 +113,11 @@ app.post('/setup-users', async (req, res) => {
 
         res.json({ message: 'Default users created successfully' });
     } catch (error) {
+        console.error('Error creating users:', error);
         res.status(500).json({ error: 'Error creating users' });
     }
 });
+
 // Login route
 app.post('/login', async (req, res) => {
     try {
@@ -158,7 +154,8 @@ app.post('/login', async (req, res) => {
         res.status(500).json({ error: 'Login failed' });
     }
 });
-// Protect existing routes with authentication
+
+// Protected upload route
 app.post('/upload', authenticateToken, upload.single('assignmentFile'), async (req, res) => {
     try {
         // Only students can upload assignments
@@ -178,6 +175,7 @@ app.post('/upload', authenticateToken, upload.single('assignmentFile'), async (r
     }
 });
 
+// Protected get assignments route
 app.get('/assignments', authenticateToken, async (req, res) => {
     try {
         // Only staff can view all assignments
@@ -192,6 +190,7 @@ app.get('/assignments', authenticateToken, async (req, res) => {
     }
 });
 
+// Protected delete assignment route
 app.delete('/assignments/:id', authenticateToken, async (req, res) => {
     try {
         // Only staff can delete assignments
@@ -207,8 +206,8 @@ app.delete('/assignments/:id', authenticateToken, async (req, res) => {
     }
 });
 
-
-// Start server
-app.listen(5000, () => {
-    console.log('Server running on http://localhost:5000');
+// Start server with environment variable
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
 });
